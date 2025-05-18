@@ -26,6 +26,7 @@ RUN \
     DEBIAN_FRONTEND=noninteractive dpkg-reconfigure locales; \
     \
     # download and build su-exec \
+    git config --global http.sslVerify false; \
     git clone -b master https://github.com/ncopa/su-exec.git /build \
         && cd /build \
         && git fetch \
@@ -35,6 +36,7 @@ RUN \
         && mv su-exec /usr/local/bin/ \
         && rm -f /usr/local/bin/gosu \
         && sed -i 's/gosu/su-exec/g' /usr/local/bin/docker-entrypoint.sh; \
+    test -x /usr/local/bin/su-exec || exit -1; \
     cd /; \
     \
     # image cleanup \
