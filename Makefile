@@ -3,11 +3,12 @@ SHELL := /bin/bash
 BUILDDIR := $(PWD)/build
 
 repo := local
+platform := linux/amd64,linux/arm64
 targets := targets/bookworm
 versions := $(sort $(wildcard versions/*.env))
 
 .PHONY: all
-all:
+all: $(targets)
 
 $(targets): targets/%: %
 	@true
@@ -22,17 +23,20 @@ $(targets): targets/%: %
 	        extraopts="--tag $(repo)/postgres:latest $${extraopts}"; \
 	    fi; \
 	    source $${filepath}; \
-	    docker buildx build . \
-	        --file targets/$${tgt}/Dockerfile \
-		--platform linux/amd64,linux/arm64 \
-		--build-arg PG_MAJOR=$${PG_MAJOR} \
-		--build-arg PG_VERSION=$${PG_VERSION} \
-		--tag $(repo)/postgres:$${PG_MAJOR} \
-		--tag $(repo)/postgres:$${PG_VERSION} \
-		--tag $(repo)/postgres:$${PG_MAJOR}-$${tgt} \
-		--tag $(repo)/postgres:$${PG_VERSION}-$${tgt} \
-		$${extraopts} \
-	    || exit $${?}; \
+	    if [[ ! "$(skip-build)" =~ "$${version}" ]]; then \
+	        [ 0$(DEBUG) -ne 0 ] && debug=-D; \
+	        docker buildx $${debug} build . \
+	            --file targets/$${tgt}/Dockerfile \
+		    --platform $(platform) \
+		    --build-arg PG_MAJOR=$${PG_MAJOR} \
+		    --build-arg PG_VERSION=$${PG_VERSION} \
+		    --tag $(repo)/postgres:$${PG_MAJOR} \
+		    --tag $(repo)/postgres:$${PG_VERSION} \
+		    --tag $(repo)/postgres:$${PG_MAJOR}-$${tgt} \
+		    --tag $(repo)/postgres:$${PG_VERSION}-$${tgt} \
+		    $${extraopts} \
+	        || exit $${?}; \
+	    fi; \
 	done
 
 $(BUILDDIR)/latest.txt:
