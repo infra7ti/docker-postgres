@@ -1,5 +1,7 @@
 ARG PG_MAJOR=latest
 FROM postgres:${PG_MAJOR}-bookworm AS updated-image
+# Needed for source shell functions into this Dockerfile
+SHELL ["/bin/bash", "-c"]
 COPY versions/${PG_MAJOR}.env /version.env
 RUN \
     source /version.env; \
