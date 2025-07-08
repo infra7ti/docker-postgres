@@ -1,11 +1,11 @@
 #!/usr/bin/env make
 SHELL := /bin/bash
-BUILDDIR := $(PWD)/build
 
 repo := local
 platform := linux/amd64,linux/arm64
-targets := targets/bookworm
-versions := $(sort $(wildcard versions/*.env))
+default_dist := bookworm
+targets := $(sort $(wildcard targets/*/*))
+versions := $(sort $(wildcard versions/[0-9]*.env))
 
 .PHONY: all
 all: $(targets)
@@ -13,16 +13,21 @@ all: $(targets)
 $(targets): targets/%: %
 	@true
 
-%: $(BUILDDIR)/latest.txt
-	@tgt=$@; for filepath in $(versions); do \
+%: versions/latest.env
+	@tgt=${@}; for filepath in $(versions); do \
+	    source $${filepath}; \
+	    dist="$${tgt##*/}" \
 	    filename="$${filepath##*/}"; \
 	    version="$${filename%.*}"; \
-	    latest=$$(< $(BUILDDIR)/latest.txt); \
+	    latest=$$(grep -iPo 'PG_MAJOR=\K[\S*].*' versions/latest.env); \
 	    extraopts=$${extraopts:-'--load'}; \
-	    if [ $${version} == $${latest} ]; then \
-	        extraopts="--tag $(repo)/postgres:latest $${extraopts}"; \
+	    if [ "$${dist}" == "$${default_dist}" ]; then \
+	        extraopts="--tag $(repo)/postgres:$${PG_MAJOR} $${extraopts}"; \
+	        extraopts="--tag $(repo)/postgres:$${PG_VERSION} $${extraopts}"; \
+	        if [ "$${version}" == "$${latest}" ]; then \
+	            extraopts="--tag $(repo)/postgres:latest $${extraopts}"; \
+	        fi; \
 	    fi; \
-	    source $${filepath}; \
 	    if [[ ! "$(skip-build)" =~ "$${version}" ]]; then \
 	        [ 0$(DEBUG) -ne 0 ] && debug=-D; \
 	        docker buildx $${debug} build . \
@@ -30,16 +35,14 @@ $(targets): targets/%: %
 		    --platform $(platform) \
 		    --build-arg PG_MAJOR=$${PG_MAJOR} \
 		    --build-arg PG_VERSION=$${PG_VERSION} \
-		    --tag $(repo)/postgres:$${PG_MAJOR} \
-		    --tag $(repo)/postgres:$${PG_VERSION} \
-		    --tag $(repo)/postgres:$${PG_MAJOR}-$${tgt} \
-		    --tag $(repo)/postgres:$${PG_VERSION}-$${tgt} \
+		    --tag "$(repo)/postgres:$${PG_MAJOR}-$${dist}" \
+		    --tag "$(repo)/postgres:$${PG_VERSION}-$${dist}" \
 		    $${extraopts} \
 	        || exit $${?}; \
 	    fi; \
 	done
 
-$(BUILDDIR)/latest.txt:
+versions/latest.env:
 	@latest=1; for filepath in $(versions); do \
 	    filename="$${filepath##*/}"; \
 	    version="$${filename%.*}"; \
@@ -47,5 +50,4 @@ $(BUILDDIR)/latest.txt:
 	        latest=$${version}; \
 	    fi; \
 	done; \
-	mkdir -p build && \
-	echo $${latest} > $(BUILDDIR)/latest.txt
+	ln -snf $${latest}.env versions/latest.env
