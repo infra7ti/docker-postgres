@@ -1,0 +1,33 @@
+name: postgresql
+
+services:
+  server:
+    image: ${REPO:-infra7}/postgres:${POSTGRES_VERSION:-latest}
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres.pass
+      POSTGRES_USER_FILE: /run/secrets/postgres.user
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:mode=1777
+      - /var/run/postgresql:uid=26,gid=26,mode=0775
+    ports:
+      - ${PG_PORT:-5432}:5432/tcp
+    secrets:
+      - postgres.pass
+      - postgres.user
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
+
+secrets:
+  postgres.pass:
+    file: secrets/postgres.pass
+  postgres.user:
+    file: secrets/postgres.user
