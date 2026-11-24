@@ -1,8 +1,9 @@
 # syntax=docker/dockerfile:1
 
-ARG DISTRO=bookworm
+ARG DISTRO=debian
+ARG DISTRO_VER=stable
 ARG PG_MAJOR=latest
-FROM postgres:${PG_MAJOR}-${DISTRO} AS updated-image
+FROM postgres:${PG_MAJOR} AS updated-image
 RUN set -eux; \
     apt-get update; \
     apt-get dist-upgrade -y --autoremove;
@@ -10,13 +11,11 @@ RUN set -eux; \
 FROM scratch AS runtime-image
 # Needed for source shell functions into this Dockerfile
 SHELL ["/bin/bash", "-c"]
-ARG DISTRO=bookworm
+ARG DISTRO=debian
 ARG PG_MAJOR=latest
 COPY --from=updated-image / /
-COPY versions/${PG_MAJOR}.env /tmp/version.env
-COPY targets/debian/${DISTRO}/packages.env /tmp/packages.env
+COPY targets/debian/packages.env /tmp/packages.env
 RUN set -eux; \
-    source /tmp/version.env; \
     source /tmp/packages.env; \
     # runtime dependencies \
     echo "${REQUIRES}" | xargs \
@@ -24,6 +23,9 @@ RUN set -eux; \
             --no-install-recommends \
             --no-install-suggests; \
     dpkg --get-selections > /tmp/runtime-selections; \
+    \
+    # make an architecture agnostic link (amd64/arm64) for jemalloc \
+    ln -sf /usr/lib/*-linux-gnu/libjemalloc.so.2 /usr/local/lib/libjemalloc.so.2; \
     \
     # fix locales \
     sed -i 's/#\ \(en_US.UTF-8\)/\1/' /etc/locale.gen; \
@@ -33,6 +35,7 @@ RUN set -eux; \
     groupdel tape && \
     groupmod -g 26 postgres && \
     usermod -u 26 postgres && \
+    mkdir -p /var/lib/postgresql/data && \
     chown -R postgres:postgres \
       /etc/postgresql \
       /var/lib/postgresql \
@@ -44,7 +47,6 @@ FROM scratch AS build-stage
 SHELL ["/bin/bash", "-c"]
 COPY --from=runtime-image / /
 RUN set -eux; \
-    source /tmp/version.env; \
     source /tmp/packages.env; \
     # build dependencies \
     echo "${BUILD_REQUIRES}" | xargs \
@@ -54,21 +56,17 @@ RUN set -eux; \
     dpkg --get-selections > /tmp/buildtime-selections; \
     \
     # download and build su-exec \
-    git config --global http.sslVerify false; \
-    git clone -b master https://github.com/ncopa/su-exec.git /build \
-        && cd /build \
-        && git fetch \
-        && git reset --hard origin/master \
-        && make \
-        && chmod +x,u+s su-exec \
-        && mv su-exec /usr/local/bin/ \
+    git clone --depth 1 -b master https://github.com/ncopa/su-exec.git /build \
+        && make -C /build \
+        && chmod a+x,u+s /build/su-exec \
+        && mv /build/su-exec /usr/local/bin/ \
         && rm -f /usr/local/bin/gosu \
         && sed -i 's/gosu/su-exec/g' /usr/local/bin/docker-*.sh; \
     test -x /usr/local/bin/su-exec || exit -1; \
     \
-    # image cleanup \
+    # image cleanup & hardening \
     CLEAR_PACKAGES="${BUILD_REQUIRES} $( \
-        diff -u runtime-selections buildtime-selections \
+        diff -u /tmp/runtime-selections /tmp/buildtime-selections \
             | sed '/^+[a-z]/!d;s/\s.*//g;s/\+\(\w*\)/\1/g' \
     )"; \
     echo "${CLEAR_PACKAGES}" | xargs \
@@ -80,9 +78,23 @@ RUN set -eux; \
         -o APT::AutoRemove::RecommendsImportant=false; \
     apt-get -y clean; \
     rm -rf \
+        /usr/bin/apt* \
+        /usr/bin/dpkg* \
+        /usr/bin/curl \
+        /usr/bin/wget \
+        /bin/nc* /usr/bin/nc* \
         /build \
         /tmp/* \
-        /var/lib/apt/lists/*
+        /var/tmp/* \
+        /usr/share/man/* \
+        /usr/share/doc/* \
+        /var/lib/apt/lists/*; \
+    \
+    find / -xdev -perm /6000 -type f ! -path "/usr/local/bin/su-exec" -exec chmod a-s {} + || true; \
+    \
+    sed -i -E 's|^([^:]+:[^:]+:[0-9]+:[0-9]+:[^:]*:[^:]*):/bin/(ba)?sh$|\1:/usr/sbin/nologin|' /etc/passwd; \
+    passwd -l root; \
+    usermod -L postgres;
 
 
 FROM scratch
@@ -91,14 +103,21 @@ COPY --from=build-stage / /
 WORKDIR /var/lib/postgresql
 USER postgres
 
+ARG DISTRO=debian
+ARG DISTRO_VER=stable
 ARG PG_MAJOR
-ENV PG_MAJOR=${PG_MAJOR}
-ENV PATH=$PATH:/usr/lib/postgresql/${PG_MAJOR}/bin
-ENV LANG=en_US.UTF-8
-
 ARG PG_VERSION
-ENV PG_VERSION=${PG_VERSION}
-ENV PGDATA=/var/lib/postgresql/data
+
+LABEL org.opencontainers.image.title="PostgreSQL ${PG_VERSION} (${DISTRO} ${DISTRO_VER})" \
+      org.opencontainers.image.version="${PG_VERSION}"
+
+ENV PG_MAJOR=${PG_MAJOR} \
+    PG_VERSION=${PG_VERSION} \
+    PATH=$PATH:/usr/lib/postgresql/${PG_MAJOR}/bin \
+    LANG=en_US.UTF-8 \
+    PGDATA=/var/lib/postgresql/data \
+    HOME=/tmp \
+    LD_PRELOAD=/usr/local/lib/libjemalloc.so.2
 
 HEALTHCHECK \
    --interval=10s \
