@@ -1,1 +1,19 @@
-versions/latest.env
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+secrets/
+
+# Compose overrides land persistent data
+compose.override.yml
+docker-compose.override.yml
+data/
+pgdata/
+
+# Temporary and system files
+*.log
+*.tmp
+*.swp
+*~
+.DS_Store
+Thumbs.dbl
